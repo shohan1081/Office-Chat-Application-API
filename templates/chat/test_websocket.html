@@ -1,0 +1,40 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>WebSocket Test</title>
+</head>
+<body>
+    <h1>Test Chat</h1>
+    <div id="chat-messages"></div>
+    <input type="text" id="message-input" placeholder="Type a message">
+    <button onclick="sendMessage()">Send</button>
+
+    <script>
+        const roomName = 'testroom';
+        const chatSocket = new WebSocket(
+            'ws://' + window.location.host + '/ws/chat/' + roomName + '/'
+        );
+
+        chatSocket.onmessage = function(e) {
+            const data = JSON.parse(e.data);
+            if (data.type === 'chat_message') {
+                document.getElementById('chat-messages').innerHTML += `<p>${data.username}: ${data.message}</p>`;
+            }
+        };
+
+        chatSocket.onclose = function(e) {
+            console.error('Chat socket closed unexpectedly');
+        };
+
+        function sendMessage() {
+            const messageInput = document.getElementById('message-input');
+            const message = messageInput.value;
+            chatSocket.send(JSON.stringify({
+                type: 'chat_message',
+                message: message
+            }));
+            messageInput.value = '';
+        }
+    </script>
+</body>
+</html>

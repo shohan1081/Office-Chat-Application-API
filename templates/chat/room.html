@@ -1,0 +1,172 @@
+{% extends 'base.html' %}
+{% block title %}Chat Room{% endblock %}
+{% block content %}
+    <h2>Chat Rooms</h2>
+    <div>
+        <input type="text" id="room-name-input" placeholder="Enter room name">
+        <button onclick="createRoom()">Create Room</button>
+    </div>
+    <ul id="room-list"></ul>
+    <div id="chat-section" style="display: none;">
+        <h3>Room: <span id="current-room"></span></h3>
+        <div id="online-users" class="status"></div>
+        <div id="typing-indicator" class="typing"></div>
+        <div id="chat-messages" style="height: 300px; overflow-y: scroll;"></div>
+        <input type="text" id="message-input" placeholder="Type a message" oninput="handleTyping()">
+        <button onclick="sendMessage()">Send</button>
+        <form id="file-upload-form" enctype="multipart/form-data">
+            <input type="file" id="file-input">
+            <button type="submit">Upload File</button>
+        </form>
+    </div>
+
+    <script>
+        let chatSocket = null;
+        let typingTimeout = null;
+
+        function createRoom() {
+            const roomName = document.getElementById('room-name-input').value;
+            fetch('/api/rooms/', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: JSON.stringify({ name: roomName })
+            }).then(response => response.json()).then(data => {
+                if (data.id) {
+                    loadRooms();
+                }
+            });
+        }
+
+        function loadRooms() {
+            fetch('/api/rooms/')
+                .then(response => response.json())
+                .then(rooms => {
+                    const roomList = document.getElementById('room-list');
+                    roomList.innerHTML = '';
+                    rooms.forEach(room => {
+                        const li = document.createElement('li');
+                        li.innerHTML = `<a href="#" onclick="joinRoom('${room.name}')">${room.name}</a>`;
+                        roomList.appendChild(li);
+                    });
+                });
+        }
+
+        function joinRoom(roomName) {
+            document.getElementById('chat-section').style.display = 'block';
+            document.getElementById('current-room').innerText = roomName;
+
+            if (chatSocket) {
+                chatSocket.close();
+            }
+
+            chatSocket = new WebSocket(
+                'ws://' + window.location.host + '/ws/chat/' + roomName + '/'
+            );
+
+            chatSocket.onmessage = function(e) {
+                const data = JSON.parse(e.data);
+                if (data.type === 'chat_message') {
+                    const messages = document.getElementById('chat-messages');
+                    messages.innerHTML += `<div class="message">${data.username}: ${data.message}</div>`;
+                    messages.scrollTop = messages.scrollHeight;
+                } else if (data.type === 'user_status') {
+                    const onlineUsers = document.getElementById('online-users');
+                    onlineUsers.innerHTML = `${data.username} is ${data.status}`;
+                } else if (data.type === 'typing_indicator') {
+                    const typingIndicator = document.getElementById('typing-indicator');
+                    if (data.is_typing) {
+                        typingIndicator.innerHTML = `${data.username} is typing...`;
+                    } else {
+                        typingIndicator.innerHTML = '';
+                    }
+                }
+            };
+
+            chatSocket.onclose = function(e) {
+                console.error('Chat socket closed unexpectedly');
+            };
+
+            loadChatHistory(roomName);
+        }
+
+        function sendMessage() {
+            const messageInput = document.getElementById('message-input');
+            const message = messageInput.value;
+            if (message && chatSocket) {
+                chatSocket.send(JSON.stringify({
+                    type: 'chat_message',
+                    message: message
+                }));
+                messageInput.value = '';
+                handleTyping(false);
+            }
+        }
+
+        function handleTyping(isTyping = true) {
+            if (chatSocket) {
+                chatSocket.send(JSON.stringify({
+                    type: 'typing',
+                    is_typing: isTyping
+                }));
+                if (isTyping) {
+                    clearTimeout(typingTimeout);
+                    typingTimeout = setTimeout(() => handleTyping(false), 2000);
+                }
+            }
+        }
+
+        function loadChatHistory(roomName) {
+            fetch(`/api/history/${roomName}/`)
+                .then(response => response.json())
+                .then(messages => {
+                    const chatMessages = document.getElementById('chat-messages');
+                    chatMessages.innerHTML = '';
+                    messages.forEach(msg => {
+                        chatMessages.innerHTML += `<div class="message">${msg.user.username}: ${msg.content}</div>`;
+                    });
+                    chatMessages.scrollTop = chatMessages.scrollHeight;
+                });
+        }
+
+        document.getElementById('file-upload-form').onsubmit = function(e) {
+            e.preventDefault();
+            const fileInput = document.getElementById('file-input');
+            const formData = new FormData();
+            formData.append('file', fileInput.files[0]);
+            fetch('/api/upload/', {
+                method: 'POST',
+                headers: {
+                    'X-CSRFToken': getCookie('csrftoken')
+                },
+                body: formData
+            }).then(response => response.json()).then(data => {
+                if (data.file_url) {
+                    const messages = document.getElementById('chat-messages');
+                    messages.innerHTML += `<div class="message"><a href="${data.file_url}" target="_blank">File uploaded</a></div>`;
+                    messages.scrollTop = messages.scrollHeight;
+                    fileInput.value = '';
+                }
+            });
+        };
+
+        function getCookie(name) {
+            let cookieValue = null;
+            if (document.cookie && document.cookie !== '') {
+                const cookies = document.cookie.split(';');
+                for (let i = 0; i < cookies.length; i++) {
+                    const cookie = cookies[i].trim();
+                    if (cookie.substring(0, name.length + 1) === (name + '=')) {
+                        cookieValue = decodeURIComponent(cookie.substring(name.length + 1));
+                        break;
+                    }
+                }
+            }
+            return cookieValue;
+        }
+
+        loadRooms();
+    </script>
+{% endblock %}
